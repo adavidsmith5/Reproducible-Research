@@ -1,0 +1,256 @@
+---
+title: "Storm Data Analysis"
+author: "Tony Smith"
+date: "February 24, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(hash)
+```
+
+# Analyzing Storm Data
+In this project, I will explore Storm Data from the National Oceanic and Atmospheric Administration's storm database. This database stores information on major storms and weather events in the United States, such as where and when they occurred and estimates on damage costs, and casualties suffered. I will be particularly interested in investigating what types of storms caused the most casualties (fatalities and injuries) and then which caused the most monetary damage (property damage and crop damage).
+
+## Data Processing
+The first step to the process was loading in the data from the raw CSV file and taking a look at the variables and types of data involved.
+```{r cache = TRUE}
+  stormdf <- read.csv("/repdata_data_StormData.csv.bz2")
+  str(stormdf)
+```
+
+As you can see, there are several variables that we will not need in our analysis as we are only going to be interested in the event type (EVTYPE), casualties (FATALITIES and INJURIES), and the four columns for property and crop damage (PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP). I will break the analysis into two parts, casualties and costs. First, let's preprocess the casualties data.
+
+### Casualties Preprocessing
+Because I am only interested in events that resulted in fatalities or injuries, I start off by filtering the dataframe.
+
+```{r cache=TRUE}
+  casualtiesstormdf <- stormdf[stormdf$FATALITIES != 0 | stormdf$INJURIES != 0,]
+  str(casualtiesstormdf)
+```
+
+Next, I want to see what kinds of events are stored. According to the data source, there should be 48 unique identifiers for the types of events that were recorded.
+
+```{r}
+  length(unique(casualtiesstormdf$EVTYPE))
+```
+
+We see that there are in fact 220 different event types in the data, so next I want to see what might be causing this difference.
+
+```{r}
+  head(unique(casualtiesstormdf$EVTYPE))
+```
+I can see some issues immediately: "TSTM WIND" is an abbreviated verstion of THUNDERSTORM WIND which is one of the 48 events, and "ICE STORM/FLASH FLOOD" seems to be a combination of two event types according to the source. I want to clean this up as best as possible, so I need to replace poorly written events with their corresponding types in the documentation. This does involve some guessing on my end as the descriptions are sometimes vague and the event types are very similar making it hard to distinguish which event the description truly falls under. In the end, I feel that I was able to sufficiently get the labels correct.
+
+First, I created a list of the event types that were in the data frame and correlated them to their correct titles.
+
+```{r cache=TRUE}
+thunderstorms <- c("TSTM WIND", 'THUNDERSTORM WINDS SMALL STREA','TSTM WIND/HAIL', 'THUNDERSTORM WIND 60 MPH', 'THUNDERSTORM WINDS 63 MPH','THUNDERSTORM WIND 65MPH', 'THUNDERSTORMS WIND', 'TUNDERSTORM WIND', 'HEAVY RAIN/SEVERE WEATHER', 'THUNDERSTORM WIND G50', 'THUNDERSTORM WINDS.', 'THUNDERSTORM WIND G55', 'THUNDERSTORM WIND G60', 'THUNDERSTORM WINDS G60', 'TSTM WIND G58', 'THUNDERSTORM WIND/ TREES', 'THUNDERSTORM WIND/AWNING', 'THUNDERSTORM WIND 98 MPH', 'THUNDERSTORM WIND TREES', 'THUNDERSTORM WIND/ TREE', 'THUNDERSTORM DAMAGE TO', 'THUNDERSTORM WIND 65 MPH', 'THUNDERSTORM HAIL', 'THUNDERSTORM WIND.', 'THUNDERSTORM WINDSHAIL', 'THUDERSTORM WINDS', 'THUNDERSTORMWINDS', 'TSTM WIND DAMAGE', 'STORM FORCE WINDS', 'THUNDERSTORM WINDS AND', 'THUNDERESTORM WINDS', 'THUNDERSTORM WINDS/FLOODING', 'THUNDEERSTORM WINDS', 'THUNERSTORM WINDS', 'TSTM WINDS', 'TSTMW', 'TSTM WIND 65)', 'THUNDERSTORM WINDS/ FLOOD', 'THUNDERSTROM WIND', 'THUNDERSTORMW', 'THUNDERSTORM WIND G52', 'THUNDERSTORM  WINDS','DRY MICROBURST 58', 'Microburst', 'wet micoburst', 'DRY MICROBURST 84',  'MICROBURST WINDS', 'DRY MICROBURST 50', 'WET MICROBURST', 'DRY MICROBURST WINDS', 'DRY MIRCOBURST WINDS', 'WET MICROBURST', 'MICROBURST', 'DRY MICROBURST WINDS', 'DRY MICROBURST 53', 'DRY MICROBURST', 'DRY MICROBURST 61', 'THUNDERSTORM WIND/LIGHTNING', 'LIGHTNING AND THUNDERSTORM WIN', 'THUNDERSTORM WINDS 13', 'TSTM WIND  (G45)', 'TSTM WIND 55', 'TSTM WIND 51', 'TSTM WIND 50', 'TSTM WIND 52', 'THUNDERSTORM WINDS 61', 'DOWNBURST', 'DOWNBURST WINDS', "TSTM WIND (G45)",'THUNDERTORM WINDS', 'THUNDERSTORM WINDS53', "TSTM WIND (G40)", "TSTM WIND (41)",'LIGHTNING THUNDERSTORM WINDSS','GUSTY THUNDERSTORM WIND','LIGHTNING THUNDERSTORM WINDS','THUNDERSTORM WIND (G40)','SEVERE THUNDERSTORM WINDS','SEVERE THUNDERSTORM','SEVERE THUNDERSTORMS', "TSTM WIND 40", "TSTM WIND 45", "TSTM WIND (G35)", "THUNDERSTORM WINDS/HAIL","TSTM WIND G45", " TSTM WIND (G45)", "TSTM WND", " TSTM WIND", "TSTM WIND AND LIGHTNING", "TSTM", "TSTM HEAVY RAIN", "THUNDERSTORM", "THUNDERSTORM WINDS", "THUNDERSTORM WIND", "THUNDERSTORM WINDS LIGHTNING", "THUNDERSTORM WINDS HAIL", "THUNDERSTORM WINS", "THUNDERSTORMS", "THUNDERSTORM WINDS/FUNNEL CLOU", "THUNDERSTORMS WINDS", "THUNDERSTORM WINDS 60", "THUNDERSTORM WINDSS", "THUNDERSTORM WINDS (G40)", "GUSTY THUNDERSTORM", "GUSTY THUNDERSTORM WINDS", 'Tstm Wind')
+blizzards <- c('BLIZZARD WEATHER','HIGH WIND/BLIZZARD','HIGH WIND/BLIZZARD/FREEZING RA', 'HEAVY SNOW/BLIZZARD/AVALANCHE', 'AVALANCHE','HIGH WIND/ BLIZZARD', 'AVALANCE', 'BLIZZARD/HIGH WIND', 'HIGH WIND/WIND CHILL/BLIZZARD','GROUND BLIZZARD', 'BLIZZARD/WINTER STORM')
+coastalfloods <- c('HEAVY SURF COASTAL FLOODING', 'TIDAL FLOODING', 'Coastal Flooding', 'CSTL FLOODING/EROSION', 'coastal flooding','Coastal Flood', 'COASTAL FLOODING','COASTAL  FLOODING/EROSION', 'COASTAL FLOODING/EROSION', 'COASTAL EROSION', 'LAKESHORE FLOOD', 'HIGH WINDS/COASTAL FLOOD', 'Erosion/Cstl Flood')
+coldwindchills <- c('WIND CHILL', 'HIGH WINDS AND WIND CHILL', 'HIGH WIND/LOW WIND CHILL','EXTREME COLD/WIND CHILL', 'EXTREME WINDCHILL TEMPERATURES', 'BITTER WIND CHILL TEMPERATURES', 'BITTER WIND CHILL', 'COLD WIND CHILL TEMPERATURES',  'HIGH WINDS AND WIND CHILL', 'WIND CHILL/HIGH WIND', 'HIGH WIND/WIND CHILL', 'EXTREME WIND CHILL', 'Unseasonable Cold')
+fogs <- c('PATCHY DENSE FOG', 'FOG', 'DENSE FOG', 'PATCHY DENSE FOG', 'FOG AND COLD TEMPERATURES')
+smokes <- c('SMOKE')
+duststorms <- c('BLOWING DUST', 'HIGH WINDS DUST STORM', 'Saharan Dust', 'DUST STORM/HIGH WINDS')
+dustdevils <- c('DUST DEVEL', 'Dust Devil', 'LANDSPOUT')
+droughts <- c('EXCESSIVELY DRY', 'EXCESSIVE HEAT/DROUGHT', 'DROUGHT/EXCESSIVE HEAT', 'HEAT WAVE DROUGHT')
+excessiveheats <- c('UNSEASONABLY WARM',  'EXTREME HEAT', 'HEAT WAVES', 'UNSEASONABLY WARM AND DRY', 'RECORD/EXCESSIVE HEAT')
+extremecolds <- c('EXTREME COLD', 'EXTREME/RECORD COLD', 'COLD', 'COLD WAVE', 'LOW TEMPERATURE', 'HYPOTHERMIA', 'COLD/WINDS', 'RECORD COLD', 'COLD WEATHER', 'UNSEASONABLY COLD', 'Extreme Cold', 'HYPERTHERMIA/EXPOSURE', 'HYPOTHERMIA/EXPOSURE', 'Extended Cold', 'EXTREME WINDCHILL', 'Cold', 'Cold Temperature', 'Hypothermia/Exposure')
+flashfloods <- c('ICE STORM/FLASH FLOOD', 'RAPIDLY RISING WATER', 'FLASH FLOODING/FLOOD', 'FLASH FLOOD/FLOOD', 'FLASH FLOOD/LANDSLIDE', 'FLASH FLOOD LANDSLIDES', 'FLASH FLOODING', 'FLASH FLOODING/THUNDERSTORM WI', 'FLASH FLOODS', 'FLASH FLOOD WINDS', 'FLOOD/FLASH FLOOD', 'FLASH FLOOD/', 'FLOOD/FLASH/FLOOD', ' FLASH FLOOD', 'FLASH FLOOD FROM ICE JAMS', 'FLASH FLOOD - HEAVY RAIN', 'FLASH FLOOD/ STREET', 'FLOOD FLASH', 'FLOOD/FLASH', 'FLOOD/FLASHFLOOD')
+floods <- c('FLOODING', 'FLOOD & HEAVY RAIN', 'HEAVY RAIN AND FLOOD', 'URBAN SMALL', 'URBAN FLOODS', 'HEAVY RAIN/SMALL STREAM URBAN', 'URBAN AND SMALL', 'FLOOD/RIVER FLOOD', 'URBAN/SML STREAM FLD', 'EXCESSIVE RAINFALL', 'URBAN/SML STREAM FLDG', 'LANDSLIDE', 'RIVER FLOODING', 'URBAN AND SMALL STREAM FLOODIN', 'Mudslides', 'Mudslide', 'River Flooding', 'HIGH WATER', 'BREAKUP FLOODING','LANDSLIDES', 'URBAN/STREET FLOODING', 'Flood/Strong Wind', 'RIVER FLOOD', 'FLOOD WATCH/', 'FLOODING/HEAVY RAIN', 'URBAN FLOODING', 'URBAN/SMALL FLOODING', 'LOCAL FLOOD', 'FLOOD/RAIN/WINDS', 'URBAN/SMALL STREAM FLOODING', 'STREAM FLOODING', 'MUDSLIDES', 'FLOOD/RAIN/WIND', 'SMALL STREAM URBAN FLOOD', 'URBAN FLOOD', 'HEAVY RAIN/FLOODING', 'HIGH WINDS/FLOODING', 'URBAN/SMALL STREAM FLOOD', 'MINOR FLOODING', 'URBAN/SMALL STREAM  FLOOD', 'URBAN AND SMALL STREAM FLOOD', 'MUD SLIDE', 'SMALL STREAM FLOODING', 'FLOODS', 'Urban flood', 'Urban Flood', 'RURAL FLOOD', 'MUD SLIDES', 'EXCESSIVE WETNESS', 'MAJOR FLOOD', 'ICE JAM FLOODING', 'SMALL STREAM FLOOD', 'RIVER AND STREAM FLOOD', 'MUD SLIDES URBAN FLOODING', 'Landslump', 'MUDSLIDE', 'HEAVY RAINS/FLOODING', 'SNOWMELT FLOODING', 'URBAN/SMALL STREAM', 'Ice jam flood (minor', 'DAM BREAK', 'ROCK SLIDE')
+frostfreezes <- c('FROST', 'LATE FREEZE', 'FREEZE', 'DAMAGING FREEZE', 'Frost', 'Frost/Freeze', 'Cold and Frost', 'COLD AND FROST', 'FIRST FROST', 'FROST\\FREEZE', 'HARD FREEZE', 'Freeze', 'Damaging Freeze', 'Early Frost', 'AGRICULTURAL FREEZE', "FREEZING FOG")
+funnelclouds <- c('COLD AIR FUNNEL', 'Funnel Cloud', 'COLD AIR FUNNELS', 'FUNNEL', 'WALL CLOUD', 'WALL CLOUD/FUNNEL CLOUD', 'FUNNEL CLOUDS')
+hails <- c('HAIL 1.75)', 'HAIL STORM', 'HAIL/WIND','THUNDERSTORM WIND/HAIL', 'HAIL 175', 'HAIL 275', 'HAIL 450', 'HAILSTORM', 'WIND/HAIL','HAIL 75', 'SMALL HAIL', 'HAIL 150','HAIL 075','HAIL 100','HAIL 125','HAIL 80', 'Hail(0.75)', 'Small Hail', 'GUSTY WIND/HAIL', 'LATE SEASON HAIL', 'NON SEVERE HAIL', 'HAIL/WINDS', 'HAIL 200', 'HAIL 0.75', 'HAIL DAMAGE')
+heats <- c('RECORD HEAT', 'HEAT WAVE', 'Record Heat', 'Heat Wave', 'WARM WEATHER')
+heavyrains <- c('HEAVY RAINS', 'HEAVY RAIN/LIGHTNING', 'RAIN/WIND', 'Torrential Rainfall', 'LIGHTNING AND HEAVY RAIN', 'LIGHTNING/HEAVY RAIN', 'HIGH WINDS HEAVY RAINS', 'HIGH WINDS/HEAVY RAIN', 'HEAVY RAIN EFFECTS', 'HEAVY PRECIPATATION', 'RAIN (HEAVY)', 'RAINSTORM', 'LOCALLY HEAVY RAIN', 'RECORD RAINFALL', 'HVY RAIN', 'HEAVY PRECIPITATION', 'HEAVY SHOWER', 'UNSEASONAL RAIN', "RAIN")
+heavysnows <- c('HIGH WIND AND HEAVY SNOW', 'HEAVY SNOW/HIGH', 'HEAVY SNOW/HIGH WINDS/FREEZING', 'HIGH WIND/HEAVY SNOW', 'HEAVY SNOW/WIND', 'HEAVY SNOWPACK', 'SNOW/HEAVY SNOW', 'HEAVY SNOW/BLIZZARD', 'HEAVY SNOW/BLOWING SNOW', 'SNOW AND HEAVY SNOW', 'HEAVY RAIN/SNOW', 'BLIZZARD/HEAVY SNOW', 'HEAVY SNOW/HIGH WINDS', 'HEAVY SNOW/HIGH WIND', 'HEAVY SNOW/SLEET', 'HEAVY LAKE SNOW', 'HEAVY SNOW/FREEZING RAIN')
+highsurfs <- c('HEAVY SURF', 'ROUGH SURF', 'Heavy surf and wind', 'Heavy Surf', 'HIGH SURF ADVISORY', 'High Surf', 'HIGH SWELLS', '   HIGH SURF ADVISORY', 'HAZARDOUS SURF', 'HIGH SURF ADVISORIES', 'HEAVY SURF/HIGH SURF', 'Heavy Rain/High Surf')
+highwinds <- c('HIGH WINDS', 'GRADIENT WIND', 'Gusty wind/rain', 'GUSTY WIND/HVY RAIN', 'Wind', 'gradient wind', 'Gradient wind', 'WIND', 'WIND STORM', 'WINDS', 'NON TSTM WIND', 'Gusty winds', 'HIGH WIND 48', 'HIGH WINDS/COLD', 'NON-SEVERE WIND DAMAGE', 'Gusty Winds', 'GUSTY WIND', 'GUSTY WINDS', 'HIGH WIND DAMAGE', 'HIGH WINDS 57','HIGH WINDS 67','HIGH WINDS/','HIGH WIND (G40)','HIGH  WINDS','HIGH WINDS 73','HIGH WINDS 55','HIGH WINDS 80','HIGH WINDS 58', 'HIGH WINDS 82',  'HIGH WINDS 66', 'HIGH WINDS 76', 'HIGH WINDS 63', 'WIND DAMAGE', 'Strong Wind', 'Wind Damage', 'NON-TSTM WIND')
+hurricanes <- c('HURRICANE OPAL/HIGH WINDS', 'HURRICANE GORDON', 'Hurricane Edouard', 'HURRICANE EMILY', 'HURRICANE FELIX', 'HURRICANE ERIN', 'HURRICANE OPAL', 'HURRICANE-GENERATED SWELLS', 'HURRICANE/TYPHOON')
+icestorms <- c('ICE', 'GLAZE ICE', 'SLEET/ICE STORM', 'ICE/SNOW', 'GLAZE/ICE STORM', 'SNOW AND ICE', 'SNOW AND ICE STORM', 'HEAVY SNOW/ICE STORM', 'HEAVY SNOW AND ICE STORM', 'Icestorm/Blizzard', 'FALLING SNOW/ICE')
+lakeshorefloods <- c('LAKE FLOOD')
+lakeeffectsnows <- c('Lake Effect Snow', "LAKE EFFECT SNOW")
+lightnings <- c('LIGHTNING INJURY', 'LIGHTNING.', ' LIGHTNING', 'LIGHTING', 'LIGHTNING FIRE', 'LIGHTNING  WAUSEON')
+marinehails <- c()
+marinehighwinds <- c('MARINE MISHAP', 'WIND AND WAVE', 'Marine Accident', 'HIGH WIND/SEAS', 'HIGH SEAS', 'HIGH WAVES', 'HIGH WIND AND SEAS')
+marinestrongwinds <- c('ROUGH SEAS', 'HEAVY SEAS', 'SEVERE TURBULENCE')
+marinethunderstormwinds <- c('MARINE TSTM WIND', 'COASTALSTORM', 'Coastal Storm', 'COASTAL STORM')
+ripcurrents <- c('RIP CURRENTS HEAVY SURF', 'DROWNING', 'ROGUE WAVE', 'RIP CURRENTS', 'RIP CURRENTS/HEAVY SURF')
+seiches <- c('COASTAL SURGE', 'HEAVY SWELLS', 'Beach Erosion')
+sleets <- c('FREEZING RAIN AND SLEET', 'FREEZING DRIZZLE', 'LIGHT SNOW AND SLEET', 'Freezing Spray', 'FREEZING RAIN', 'SLEET/RAIN/SNOW', 'SNOW/SLEET/FREEZING RAIN', 'FREEZING RAIN/SLEET', 'SLEET/FREEZING RAIN', 'Snow and sleet', 'SNOW AND SLEET', 'SLEET STORM')
+stormtides <- c('HIGH WIND AND HIGH TIDES', 'HIGH TIDES', 'BLOW-OUT TIDES', 'BLOW-OUT TIDE', 'ASTRONOMICAL HIGH TIDE', 'ASTRONOMICAL LOW TIDE', 'STORM SURGE/TIDE', 'Tidal Flooding')
+strongwinds <- c('STRONG WIND GUST', 'Strong Winds', 'STRONG WINDS', 'Whirlwind')
+tornados <- c('TORNADO F0', 'TORNADO F3', 'TORNADOS', 'TORNADO F2', 'TORNADOES, TSTM WIND, HAIL', 'COLD AIR TORNADO', 'TORNADO DEBRIS', 'TORNDAO', 'TORNADO F1', 'TORNADOES', "WHIRLWIND")
+tropicaldepressions <- c()
+tropicalstorms <- c('TROPICAL STORM ALBERTO', 'TROPICAL STORM GORDON', 'TROPICAL STORM JERRY', 'TROPICAL STORM DEAN', 'TYPHOON')
+tsunamis <- c()
+volcanicashes <- c('Volcanic Ash Plume', 'VOLCANIC ERUPTION', 'VOLCANIC ASHFALL', 'Volcanic Ash')
+waterspouts <- c('WATERSPOUT/TORNADO', 'WATERSPOUT-', 'WATERSPOUT TORNADO', 'WATERSPOUT-TORNADO', 'WATERSPOUT/ TORNADO', 'DUST DEVIL WATERSPOUT')
+wildfires <- c('WILD FIRES', 'WILD/FOREST FIRE', 'RED FLAG FIRE WX', 'GRASS FIRES', 'BRUSH FIRE', 'FOREST FIRES', 'WILDFIRES', 'WILD/FOREST FIRES')
+winterstorms <- c('WINTER STORM/HIGH WINDS', 'WINTER STORM HIGH WINDS', 'WINTER STORMS', 'WINTER STORM/HIGH WIND', 'Snow Squalls','SNOW SQUALL', 'THUNDERSNOW', 'SNOW/ICE STORM', 'HEAVY SNOW SQUALLS', 'HEAVY SNOW/SQUALLS', 'HEAVY SNOW-SQUALLS', 'SNOW SQUALLS', 'HEAVY SNOW/WINTER STORM')
+winterweathers <- c('WINTERY MIX', 'WINTER WEATHER MIX', 'WINTER WEATHER/MIX', 'SNOW', 'SNOW/ BITTER COLD', 'HEAVY SNOW/ICE', 'Glaze', 'Light snow', 'Light Snow', 'HEAVY MIX', 'SNOW FREEZING RAIN', 'SNOW/SLEET', 'SNOW/FREEZING RAIN', 'RECORD SNOW', 'SNOW/HIGH WINDS', 'ICY ROADS', 'BLOWING SNOW', 'HEAVY SNOW AND STRONG WINDS', 'SNOW ACCUMULATION', 'SNOW/ ICE', 'SNOW/BLOWING SNOW', 'HIGH WINDS/SNOW', 'ICE ON ROAD', 'GLAZE', 'Heavy snow shower', 'FREEZING RAIN/SNOW', 'Snow', 'LIGHT SNOW', 'MIXED PRECIP', 'COLD AND SNOW', 'RAIN/SNOW', 'ICE ROADS','BLACK ICE', 'EXCESSIVE SNOW', 'WINTRY MIX', 'blowing snow', 'COOL AND WET', 'COLD AND WET CONDITIONS', 'ICE FLOES', 'ICE JAM', 'HEAVY SNOW/HIGH WINDS & FLOOD', 'SNOW/COLD', 'ICE AND SNOW', 'SNOW/ICE', 'ICE/STRONG WINDS', 'Wintry Mix', 'Light Snowfall', 'Freezing Drizzle', 'Freezing Rain', 'Mixed Precipitation', 'Freezing drizzle', 'MIXED PRECIPITATION', 'LIGHT FREEZING RAIN', 'LATE SEASON SNOW')
+```
+
+Next, I create a list of the word lists and the correct event types to use in a loop to do all the replacements.
+
+```{r cache=TRUE}
+rawevents <- list(thunderstorms,blizzards,coastalfloods,coldwindchills,fogs,smokes,duststorms,dustdevils,droughts,excessiveheats,extremecolds,flashfloods,floods,frostfreezes,funnelclouds,hails,heats,heavyrains,heavysnows,highsurfs,highwinds,hurricanes,icestorms,lakeeffectsnows,lakeshorefloods,lightnings,marinehails, marinehighwinds,marinestrongwinds,marinethunderstormwinds,ripcurrents,seiches,sleets,stormtides,strongwinds,tornados,tropicaldepressions,tropicalstorms,tsunamis,volcanicashes,waterspouts,wildfires,winterstorms,winterweathers)
+correctevents <- list("THUNDERSTORM WIND", "BLIZZARD", "COASTAL FLOOD", "COLD/WIND CHILL", "DENSE FOG", "DENSE SMOKE", "DUST STORM", "DUST DEVIL", "DROUGHT", "EXCESSIVE HEAT", "EXTREME COLD/WIND CHILL", "FLASH FLOOD", "FLOOD", 'FROST/FREEZE', 'FUNNEL CLOUD', 'HAIL', 'HEAT', 'HEAVY RAIN', 'HEAVY SNOW', 'HIGH SURF', 'HIGH WIND', 'HURRICANE', 'ICE STORM', 'LAKE-EFFECT SNOW', 'LAKESHORE FLOOD', 'LIGHTNING', 'MARINE HAIL', 'MARINE HIGH WIND', 'MARINE STRONG WIND', 'MARINE THUNDERSTORM WIND', 'RIP CURRENT', 'SEICHE', 'SLEET', 'STORM SURGE/TIDE', 'STRONG WIND', 'TORNADO', 'TROPICAL DEPRESSION', 'TROPICAL STORM', 'TSUNAMI', 'VOLCANIC ASH', 'WATERSPOUT', 'WILDFIRE', 'WINTER STORM', 'WINTER WEATHER')
+```
+
+Then I use a loop to replace everything.
+
+```{r cache=TRUE}
+for (i in 1:length(correctevents)) {
+  casualtiesstormdf["EVTYPE"] <- lapply(casualtiesstormdf["EVTYPE"], function(x) replace(x, x %in% rawevents[[i]], correctevents[[i]]) )
+}
+```
+
+Now we can check the cleaned event types.
+```{r}
+  print(length(unique(casualtiesstormdf$EVTYPE)))
+  unique(casualtiesstormdf$EVTYPE)
+```
+I see there are two types that need to be taken care of, "OTHER" and "HIGH". Because I don't know what type of events these are, I will just filter them out.
+
+```{r}
+  cleancasualtiesdf <- casualtiesstormdf[casualtiesstormdf$EVTYPE != 'OTHER' & casualtiesstormdf$EVTYPE != 'HIGH',]
+  str(cleancasualtiesdf)
+```
+
+From both the dataframe and the plot, it's very obvious that Tornados result in the most casualties followed by excessive heat and heat, which could even be grouped together.
+
+### Damage Costs Preprocessing
+
+Similar to the casualties results, I want to start with the original data and get rid of anything where there are no damage costs.
+
+```{r}
+coststormdf <- stormdf[(stormdf$PROPDMG != 0 | stormdf$CROPDMG != 0),]
+str(coststormdf)
+```
+
+I want to limit the data frame to just the event types, the damage cost numbers and the damage cost multipliers.I also want to change any blank characters in the cost multipliers to "-" to make the cost calculations simpler.
+
+```{r}
+propertydamage <- coststormdf[c("EVTYPE", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")]
+propertydamage[propertydamage==""] = "-"
+str(propertydamage)
+```
+
+And now I want to clean up the event types using the correct names like before.
+
+```{r cache=TRUE}
+for (i in 1:length(correctevents)) {
+  propertydamage["EVTYPE"] <- lapply(propertydamage["EVTYPE"], function(x) replace(x, x %in% rawevents[[i]], correctevents[[i]]) )
+}
+print(length(unique(propertydamage$EVTYPE)))
+unique(propertydamage$EVTYPE)
+```
+
+Once again there are still a few names that are not clear about where they should be. I will get rid of those now.
+
+```{r}
+unclearevents <- list('APACHE COUNTY', 'OTHER', 'Other', '?')
+propertydamage <- propertydamage[!(propertydamage$EVTYPE %in% unclearevents),]
+unique(propertydamage$EVTYPE)
+```
+
+For this next part, I need to convert the damage costs to dollars. Right now they are simply decimals and the exponent or multiplier is denoted in the PROPDMGEXP and CROPDMGEXP columns. First I set up a hash of the symbol and its value.
+
+```{r}
+h <- hash()
+h[["k"]] = 1000
+h[["K"]]=1000
+h[["M"]]=1000000
+h[["m"]]=1000000
+h[["B"]]=1000000000
+h[["b"]]=1000000000
+h[["H"]]=100
+h[["h"]]=100
+h[["+"]]=1
+h[["-"]]=0
+h[["?"]]=0
+h[["0"]]=10
+h[["1"]]=10
+h[["2"]]=10
+h[["3"]]=10
+h[["4"]]=10
+h[["5"]]=10
+h[["6"]]=10
+h[["7"]]=10
+h[["8"]]=10
+```
+
+I am concerned with the total damages, so I will combine both PROPDMG and CROPDMG together ot get total damages. Then I will aggregate the results by event type.
+
+```{r cache=TRUE}
+propertydamage$totaldamages <- apply(propertydamage, 1, function(row) h[[row[3]]] * as.numeric(row[2]) + h[[row[5]]] * as.numeric(row[4]))
+eventdamages <- setNames(aggregate(propertydamage$totaldamages, by=list(propertydamage$EVTYPE), FUN=sum), c("event", "totaldamages"))
+str(eventdamages)
+```
+
+## Results
+
+### Casualties Results
+
+First, I'm going to group the casualties by Fatalities and Injuries before combining them to look at total casualties. I create a dataframe with those values for each event type.
+
+```{r}
+injuriesdeathsdf <- cleancasualtiesdf[c("EVTYPE", "FATALITIES", "INJURIES")]
+casualties <- injuriesdeathsdf %>% group_by(EVTYPE) %>% summarise(FATALITIES = sum(FATALITIES), INJURIES = sum(INJURIES))
+str(casualties)
+```
+
+Then add them together and add a final column to the data frame for the totals of each event type.
+
+```{r}
+casualties$totalcasualties <- casualties$FATALITIES + casualties$INJURIES
+str(casualties)
+```
+
+Finally, before graphing I want to look at the sorted list by total casualties.
+
+```{r}
+casualtiessorted <- casualties %>% arrange(desc(totalcasualties))
+print(casualtiessorted)
+```
+
+We can see that there is a very big drop off in the top 10 event types. For the purposes of this report, I just want to visualize those top ten to give a clear indication of what events cause the most casualties.
+
+```{r out.width="100%", fig.cap="Types of Events Arranged by Casualties."}
+p <- ggplot(casualtiessorted[1:10,], aes(x=reorder(EVTYPE, -FATALITIES), y=FATALITIES, fill=EVTYPE))
+p <- p + geom_bar(stat="identity", width=1)
+p <- p + theme(axis.text.x = element_text(angle = 45, hjust=1))
+p <- p + xlab("Event Type")
+p <- p + ylab("Total Fatalities and Injuries")
+p
+```
+
+### Damage Costs Results
+
+I want to look at the sorted results before making a plot.
+
+```{r}
+damagessorted <- eventdamages %>% arrange(desc(totaldamages))
+str(damagessorted)
+```
+
+```{r out.width="100%", fig.cap="Types of Events Arranged by Total Damage Costs."}
+g <- ggplot(damagessorted[1:10,], aes(x=reorder(event, -totaldamages), y=totaldamages, fill=event))
+g <- g + geom_bar(stat="identity", width=1)
+g <- g + theme(axis.text.x = element_text(angle = 45, hjust=1))
+g <- g + xlab("Event Type")
+g <- g + ylab("Total Damage Costs in Dollars")
+g
+```
+
+
+## Conclusions
+
+When we look at the results of weather events, we can see certain events are clearly more catastrophic than others in terms of casualties and damages.
+
+For casualties, the clear leader is Tornados followed by Excessive Heat and Heat. For damages, there are four events that are the leaders: Floods, Hurricanes, Tornados, and Storm Surges.
+
